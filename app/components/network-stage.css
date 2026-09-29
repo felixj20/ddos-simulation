@@ -1,0 +1,64 @@
+/* Network stage: frame, caption and everything inside the SVG. */
+.stage-frame { position: relative; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); overflow: hidden; }
+.stage-svg { display: block; width: 100%; height: auto; }
+.stage-caption { color: var(--muted); font-size: 13px; display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 0 16px 12px; }
+.stage-caption i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.udp-dot { background: var(--udp); }
+.http-dot { background: var(--http); }
+.legit-dot { background: var(--legit); }
+
+/* Edges */
+.edge-line { fill: none; stroke: var(--line-strong); stroke-width: 1.5; transition: stroke .2s; }
+.stage-svg.idle .edge-line { stroke-dasharray: 5 6; }
+.stage-svg.live .edge-line { stroke-width: 2; stroke-opacity: .55; }
+.stage-svg.live .edge-line.empty { stroke: var(--bad) !important; stroke-dasharray: 3 6; stroke-opacity: .35 !important; }
+.packet { stroke: none; }
+
+.edge-label rect, .node-badge rect { fill: var(--surface); stroke: var(--line-strong); stroke-width: 1; }
+.edge-label text, .node-badge text { fill: var(--text); font: 500 12px var(--mono); }
+.edge-label.zero rect { fill: var(--bad-soft); stroke: var(--bad); }
+.edge-label.zero text { fill: var(--bad); }
+.edge-label.fan rect { fill: var(--surface-2); }
+.edge-label.fan text { fill: var(--muted); }
+
+.node-badge.tone-good rect { fill: var(--ok-soft); stroke: var(--ok); }
+.node-badge.tone-good text { fill: var(--ok); }
+.node-badge.tone-warn rect { fill: var(--warn-soft); stroke: var(--warn); }
+.node-badge.tone-warn text { fill: var(--warn); }
+.node-badge.tone-bad rect { fill: var(--bad-soft); stroke: var(--bad); }
+.node-badge.tone-bad text { fill: var(--bad); }
+
+/* Nodes */
+.node .node-box { fill: var(--surface); stroke: var(--line-strong); stroke-width: 1; transition: fill .2s, stroke .2s; }
+.node-icon { color: var(--muted); }
+.node.attacker .node-icon { color: var(--bad); }
+.node.users .node-box { stroke: var(--legit); }
+.node.users .node-icon { color: var(--legit); }
+.node-title { fill: var(--text); font: 600 15px var(--sans); }
+.node-detail { fill: var(--muted); font: 12px var(--mono); }
+
+.node.tone-good .node-box { stroke: var(--ok); }
+.node.tone-warn .node-box { stroke: var(--warn); }
+.node.tone-bad .node-box { stroke: var(--bad); }
+.node.tone-good .node-detail { fill: var(--ok); }
+.node.tone-warn .node-detail { fill: var(--warn); }
+.node.tone-bad .node-detail { fill: var(--bad); }
+
+.load-track { fill: var(--surface-2); stroke: var(--line); stroke-width: 1; }
+.load-fill { fill: var(--ok); transition: width .3s ease; }
+.node.tone-warn .load-fill { fill: var(--warn); }
+.node.tone-bad .load-fill { fill: var(--bad); }
+
+.node.swarm circle { fill: var(--surface); stroke: var(--line-strong); stroke-width: 1; }
+.swarm-icon { color: var(--bad); }
+
+/* Effects: static, legible states */
+.node.fx-overload .node-box { stroke: var(--bad); stroke-width: 2; fill: var(--bad-soft); }
+.node.fx-overload .node-detail { fill: var(--bad); }
+.node.fx-block .node-box { stroke: var(--bad); }
+.block-mark, .overload-icon { color: var(--bad); }
+.drop-mark { fill: var(--warn); }
+
+@media (max-width: 640px) {
+  .stage-caption { font-size: 12px; }
+}
