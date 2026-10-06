@@ -1,10 +1,11 @@
-// Deterministic traffic-unit model for the four levels described in the
-// Digicamp reference: Firewall, Load Balancer, Rate Limiter and Final Boss.
-
-export type LevelId = 'firewall' | 'balancer' | 'limiter' | 'boss';
+export type LevelId = 'firewall' | 'balancer' | 'limiter' | 'vector' | 'cache' | 'compute' | 'defense';
+export type SimLevelId = Exclude<LevelId, 'defense'>;
 export type Protocol = 'udp' | 'http';
+export type Vector = 'udp' | 'static' | 'dynamic';
+export type RequestId = 'home' | 'search' | 'login' | 'report';
+export type DefenseId = 'udp' | 'limit' | 'bot' | 'server' | 'http';
 export type SourceMode = 'single' | 'distributed';
-export type Flow = 'udp' | 'http' | 'legit';
+export type Flow = 'udp' | 'static' | 'http' | 'bot' | 'legit';
 export type Tone = 'neutral' | 'good' | 'warn' | 'bad';
 export type OutcomeTone = 'good' | 'stopped' | 'warn' | 'overload';
 
@@ -14,9 +15,12 @@ export interface Config {
   sourceMode: SourceMode;
   sources: number;
   perSource: number;
+  vector: Vector;
+  request: RequestId;
+  defenses: DefenseId[];
 }
 
-export type NodeKind = 'attacker' | 'swarm' | 'users' | 'firewall' | 'limiter' | 'balancer' | 'server';
+export type NodeKind = 'attacker' | 'swarm' | 'users' | 'firewall' | 'cache' | 'limiter' | 'balancer' | 'server';
 
 export interface StageNode {
   id: string;
@@ -52,7 +56,25 @@ export interface Stage {
   nodes: StageNode[];
   edges: StageEdge[];
   labels: StageLabel[];
+  depthScale?: number;
 }
+
+export interface Resource {
+  id: 'cpu' | 'memory' | 'network';
+  label: string;
+  percent: number;
+  detail: string;
+}
+
+export interface ServerView {
+  title: string;
+  detail: string;
+  requests: string;
+  resources: Resource[];
+  status: { tone: Tone; text: string };
+}
+
+export type Display = { kind: 'network'; stage: Stage } | { kind: 'server'; server: ServerView };
 
 export interface Outcome {
   tone: OutcomeTone;
@@ -69,20 +91,16 @@ export interface Metric {
 }
 
 // Where in the network a trace step happens; the UI maps this to an icon.
-export type StepAt = 'source' | 'users' | 'firewall' | 'limiter' | 'balancer' | 'server';
+export type StepAt = 'source' | 'users' | 'firewall' | 'cache' | 'limiter' | 'balancer' | 'server';
 
 export interface Step {
   at: StepAt;
   text: string;
 }
 
-// Which layer decided the outcome of a run.
-export type Verdict = 'firewall' | 'limiter' | 'capacity' | 'holds';
-
 export interface Simulation {
-  stage: Stage;
+  display: Display;
   outcome: Outcome;
-  verdict: Verdict;
   steps: Step[];
   metrics: Metric[];
   achieved: string[];
@@ -92,10 +110,11 @@ export interface LevelDef {
   id: LevelId;
   tag: string;
   name: string;
+  title?: string;
   goal: string;
   objectives: { id: string; label: string }[];
   aha: string;
-  hint: string;
+  hint?: string;
 }
 
 export const RATE_LIMIT = 10;
@@ -104,11 +123,36 @@ export const FIREWALL_TRAFFIC = 100;
 export const LIMITER_SERVER_CAPACITY = 120;
 export const LIMITER_NORMAL_TRAFFIC = 60;
 export const DISTRIBUTED = { sources: 10, perSource: 8 };
-export const BOSS_SOURCES = [1, 5, 30];
-export const BOSS_INTENSITIES = [
+export const VECTOR_SOURCES = [1, 5, 30];
+export const INTENSITIES = [
   { id: 'LOW', units: 5 },
   { id: 'MEDIUM', units: 8 },
   { id: 'HIGH', units: 15 },
+];
+export const CACHE_SOURCES = [10, 20, 40, 70];
+export const CACHE_HIT_RATE = 0.75;
+export const CACHE_SERVERS = 3;
+export const CACHE_CAPACITY = CACHE_SERVERS * WEB_CAPACITY;
+export const CDN_ALARM = 400;
+
+export const VECTORS: { id: Vector; name: string; description: string; flow: Flow; blocked: boolean }[] = [
+  { id: 'udp', name: 'UDP flood', description: 'Raw packets, no web requests', flow: 'udp', blocked: true },
+  { id: 'static', name: 'Static pages', description: 'Images and pages that look the same for everyone', flow: 'static', blocked: false },
+  { id: 'dynamic', name: 'Dynamic pages', description: 'Search results and carts, built for each visitor', flow: 'http', blocked: false },
+];
+
+export const COMPUTE_SOURCES = 20;
+export const COMPUTE_PER_SOURCE = 5;
+export const COMPUTE_REQUESTS = COMPUTE_SOURCES * COMPUTE_PER_SOURCE;
+export const COMPUTE_CAPACITY = 250;
+export const COMPUTE_NETWORK = 38;
+export const REJECT_COST = 0.1;
+
+export const REQUESTS: { id: RequestId; name: string; description: string; why: string; cost: number; memory: number; adminOnly?: boolean }[] = [
+  { id: 'home', name: 'Homepage', description: 'The start page of the shop', why: 'The start page looks almost the same for everyone, so it is cheap to build.', cost: 0.5, memory: 22 },
+  { id: 'search', name: 'Search', description: 'Looks for a word in every product', why: 'Every search goes through the whole product list.', cost: 1.5, memory: 41 },
+  { id: 'login', name: 'Login', description: 'Checks a username and password', why: 'Passwords are hashed slowly on purpose, so stolen ones are hard to crack. Wrong passwords cost just as much.', cost: 3, memory: 30 },
+  { id: 'report', name: 'Sales report', description: 'Builds a PDF from every order ever placed', why: 'The report is for admins only.', cost: 8, memory: 18, adminOnly: true },
 ];
 
 export const LEVELS: LevelDef[] = [
@@ -150,24 +194,79 @@ export const LEVELS: LevelDef[] = [
     hint: 'The limit applies per source. Does a single source gain anything from sending more?',
   },
   {
-    id: 'boss',
+    id: 'vector',
     tag: '04',
-    name: 'Final Boss',
-    goal: 'Combine everything from the previous levels. The target system now has a firewall, a rate limiter and a load balancer.',
+    name: 'Attack Vector',
+    title: 'Stay under the radar',
+    goal: `The rate limiter got stricter: any source that sends more than ${RATE_LIMIT} is banned. Bring the two servers down anyway.`,
     objectives: [
       { id: 'pass', label: 'Get past the firewall' },
-      { id: 'cap', label: 'Get more than 200 units to the servers' },
+      { id: 'cap', label: `Get more than ${WEB_CAPACITY * 2} units to the servers` },
     ],
-    aha: 'There is no single protection against DDoS attacks. Each layer solves a different problem, and only several layers together make a system resilient.',
-    hint: 'The rate limiter limits every source individually. Which protocol gets past the firewall?',
+    aha: 'A rate limiter judges every source on its own. Many quiet sources, each just under the limit, add up to more than the servers can take.',
+    hint: `Sources × rate has to beat ${WEB_CAPACITY * 2}, and no single source may go over ${RATE_LIMIT}.`,
+  },
+  {
+    id: 'cache',
+    tag: '05',
+    name: 'Cache & CDN',
+    title: 'Slip past the CDN',
+    goal: `A CDN now sits in front of three servers. It answers cached pages itself and raises the alarm when more than ${CDN_ALARM} units arrive.`,
+    objectives: [
+      { id: 'miss', label: 'Get past the cache' },
+      { id: 'cap', label: `Get more than ${CACHE_CAPACITY} units to the servers` },
+    ],
+    aha: 'A CDN absorbs everything it can cache and watches for floods. Attackers go for pages it cannot cache, at a volume just low enough to stay under the alarm.',
+    hint: `More than ${CACHE_CAPACITY} has to reach the servers, but no more than ${CDN_ALARM} may reach the CDN.`,
+  },
+  {
+    id: 'compute',
+    tag: '06',
+    name: 'Expensive Requests',
+    title: 'Find the weak spot',
+    goal: `The traffic is fixed: ${COMPUTE_REQUESTS} requests per second, every source under the rate limit. You only pick which page they call.`,
+    objectives: [
+      { id: 'calm', label: 'Send requests the server can handle' },
+      { id: 'overload', label: `Overload the CPU with the same ${COMPUTE_REQUESTS} requests` },
+    ],
+    aha: 'It is not just how many requests arrive, but how much work each one causes. Attackers look for expensive pages that anyone can call, like login or search.',
+    hint: 'An expensive page only helps if the server lets you in.',
+  },
+  {
+    id: 'defense',
+    tag: '07',
+    name: 'Final Defense',
+    title: 'Hold the line',
+    goal: 'Now you defend. Four waves, 4 points, and you can rebuild your defense before every wave.',
+    objectives: [
+      { id: 'w1', label: 'Hold wave 1' },
+      { id: 'w2', label: 'Hold wave 2' },
+      { id: 'w3', label: 'Hold wave 3' },
+      { id: 'w4', label: 'Hold wave 4' },
+    ],
+    aha: 'No single defense held every wave. Each layer stopped one kind of traffic, and the last wave was not an attack at all. Sometimes the answer is more capacity, not more filtering.',
   },
 ];
 
+const BASE_CONFIG: Config = {
+  protocol: 'http',
+  intensity: 100,
+  sourceMode: 'single',
+  sources: 1,
+  perSource: 8,
+  vector: 'udp',
+  request: 'home',
+  defenses: [],
+};
+
 export const DEFAULT_CONFIGS: Record<LevelId, Config> = {
-  firewall: { protocol: 'udp', intensity: 100, sourceMode: 'single', sources: 1, perSource: 8 },
-  balancer: { protocol: 'http', intensity: 120, sourceMode: 'single', sources: 1, perSource: 8 },
-  limiter: { protocol: 'http', intensity: 150, sourceMode: 'single', sources: 1, perSource: 8 },
-  boss: { protocol: 'http', intensity: 80, sourceMode: 'single', sources: 1, perSource: 8 },
+  firewall: { ...BASE_CONFIG, protocol: 'udp' },
+  balancer: { ...BASE_CONFIG, intensity: 120 },
+  limiter: { ...BASE_CONFIG, intensity: 150 },
+  vector: { ...BASE_CONFIG, intensity: 80 },
+  cache: { ...BASE_CONFIG, sources: CACHE_SOURCES[0] },
+  compute: BASE_CONFIG,
+  defense: BASE_CONFIG,
 };
 
 export const BALANCER_BANDS: { id: string; range: string; tone: 'good' | 'warn' | 'bad'; text: string; matches: (t: number) => boolean }[] = [
@@ -187,13 +286,16 @@ function serverTone(loadPercent: number): Tone {
   return 'good';
 }
 
-function webServers(depth: number, each: number, live = true): StageNode[] {
-  return [1, 2].map((n) => ({
-    id: `web${n}`,
+const MAX_SWARM = 40;
+const SERVER_LATERALS: Record<number, number[]> = { 2: [-0.55, 0.55], 3: [-0.85, 0, 0.85] };
+
+function webServers(depth: number, count: number, each: number, live = true): StageNode[] {
+  return SERVER_LATERALS[count].map((lateral, i) => ({
+    id: `web${i + 1}`,
     kind: 'server' as const,
     depth,
-    lateral: n === 1 ? -0.55 : 0.55,
-    title: `Web ${n}`,
+    lateral,
+    title: `Web ${i + 1}`,
     detail: `${fmt(each)} / ${WEB_CAPACITY}`,
     idleDetail: `max ${WEB_CAPACITY}`,
     load: each,
@@ -216,6 +318,22 @@ function swarm(count: number, lanes: number, from: number, to: number, units: nu
   return { nodes, edges, lastDepth: Math.floor((count - 1) / lanes) * 0.05 };
 }
 
+function sourceGroup(count: number, perSource: number, target: string, flow: Flow) {
+  if (count === 1) {
+    return {
+      nodes: [{ id: 'attacker', kind: 'attacker', depth: 0, lateral: 0, title: 'Attacker', detail: `${perSource} units` } as StageNode],
+      edges: [{ id: `a-${target}`, from: 'attacker', to: target, units: perSource, flows: [{ flow, units: perSource }] }],
+    };
+  }
+  const wide = count >= 10;
+  return swarm(Math.min(count, MAX_SWARM), wide ? 10 : count, wide ? -0.95 : -0.8, wide ? 0.95 : 0.8, perSource, target, flow);
+}
+
+function fanLabel(count: number, perSource: number, depth: number): StageLabel[] {
+  if (count === 1) return [];
+  return [{ id: 'fan', depth, lateral: count >= 10 ? -1.12 : -0.98, text: `${count} × ${perSource} = ${count * perSource}` }];
+}
+
 function simulateFirewall(c: Config): Simulation {
   const blocked = c.protocol === 'udp';
   const name = blocked ? 'UDP' : 'HTTP';
@@ -223,7 +341,7 @@ function simulateFirewall(c: Config): Simulation {
   const flow: Flow = c.protocol;
 
   return {
-    stage: {
+    display: { kind: 'network', stage: {
       nodes: [
         { id: 'attacker', kind: 'attacker', depth: 0, lateral: 0, title: 'Attacker', detail: `${name} traffic` },
         {
@@ -238,11 +356,10 @@ function simulateFirewall(c: Config): Simulation {
         { id: 'f-s', from: 'firewall', to: 'server', units: delivered, flows: [{ flow, units: delivered }] },
       ],
       labels: [],
-    },
+    } },
     outcome: blocked
       ? { tone: 'stopped', title: 'Attack stopped', detail: 'The firewall has a rule that blocks UDP traffic. 0 traffic units reach the server.' }
       : { tone: 'good', title: 'Traffic reaches the server', detail: 'The firewall has no rule against HTTP, so every HTTP request is allowed through to the server.' },
-    verdict: blocked ? 'firewall' : 'holds',
     steps: [
       { at: 'source', text: `The attacker sends ${FIREWALL_TRAFFIC} units of ${name} traffic.` },
       {
@@ -279,11 +396,11 @@ function simulateBalancer(c: Config): Simulation {
   if (total > 200) achieved.push('overload');
 
   return {
-    stage: {
+    display: { kind: 'network', stage: {
       nodes: [
         { id: 'attacker', kind: 'attacker', depth: 0, lateral: 0, title: 'Attacker', detail: `${total} units` },
         { id: 'lb', kind: 'balancer', depth: 0.5, lateral: 0, title: 'Load Balancer', detail: 'splits 50 / 50' },
-        ...webServers(1, each),
+        ...webServers(1, 2, each),
       ],
       edges: [
         { id: 'a-lb', from: 'attacker', to: 'lb', units: total, flows: [{ flow: 'http', units: total }] },
@@ -291,9 +408,8 @@ function simulateBalancer(c: Config): Simulation {
         { id: 'lb-w2', from: 'lb', to: 'web2', units: each, flows: [{ flow: 'http', units: each }] },
       ],
       labels: [],
-    },
+    } },
     outcome: { tone, title: band.text, detail },
-    verdict: total > 200 ? 'capacity' : 'holds',
     steps: [
       { at: 'source', text: `${total} traffic units arrive at the load balancer.` },
       { at: 'balancer', text: `Split evenly: ${fmt(each)} to Web 1, ${fmt(each)} to Web 2.` },
@@ -332,7 +448,7 @@ function simulateLimiter(c: Config): Simulation {
   if (distributed) achieved.push('distributed');
 
   return {
-    stage: {
+    display: { kind: 'network', stage: {
       nodes: [
         ...sources.nodes,
         { id: 'users', kind: 'users', depth: 0, lateral: 0.7, title: 'Normal users', detail: `${LIMITER_NORMAL_TRAFFIC} units` },
@@ -357,7 +473,7 @@ function simulateLimiter(c: Config): Simulation {
       labels: distributed
         ? [{ id: 'fan', depth: 0.25, lateral: -0.35, text: `${DISTRIBUTED.sources} × ${DISTRIBUTED.perSource} = ${attack} units` }]
         : [],
-    },
+    } },
     outcome: distributed
       ? {
           tone: 'overload', title: 'Server overloaded',
@@ -368,7 +484,6 @@ function simulateLimiter(c: Config): Simulation {
           tone: 'good', title: 'The server stays available',
           detail: `The rate limiter lets only ${passed} of ${attack} units through from this source.${c.intensity > 150 ? ' More intensity gives a single source no advantage.' : ''} Server load: ${atServer} / ${LIMITER_SERVER_CAPACITY}.`,
         },
-    verdict: overloaded ? 'capacity' : 'limiter',
     steps: distributed
       ? [
           { at: 'source', text: `${DISTRIBUTED.sources} sources send ${DISTRIBUTED.perSource} units each.` },
@@ -392,78 +507,60 @@ function simulateLimiter(c: Config): Simulation {
   };
 }
 
-function simulateBoss(c: Config): Simulation {
+function simulateVector(c: Config): Simulation {
   const udp = c.protocol === 'udp';
   const name = udp ? 'UDP' : 'HTTP';
   const flow: Flow = c.protocol;
   const total = c.sources * c.perSource;
   const afterFirewall = udp ? 0 : total;
-  const perSourcePassed = Math.min(c.perSource, RATE_LIMIT);
-  const passed = udp ? 0 : c.sources * perSourcePassed;
-  const dropped = afterFirewall - passed;
+  const banned = !udp && c.perSource > RATE_LIMIT;
+  const passed = banned ? 0 : afterFirewall;
   const each = passed / 2;
-
-  const sources = c.sources === 1
-    ? {
-        nodes: [{ id: 'attacker', kind: 'attacker', depth: 0, lateral: 0, title: 'Attacker', detail: `${c.perSource} units` } as StageNode],
-        edges: [{ id: 'a-fw', from: 'attacker', to: 'fw', units: total, flows: [{ flow, units: total }] }],
-      }
-    : swarm(c.sources, c.sources >= 10 ? 10 : c.sources, c.sources >= 10 ? -0.95 : -0.8, c.sources >= 10 ? 0.95 : 0.8, c.perSource, 'fw', flow);
+  const overloaded = each > WEB_CAPACITY;
+  const everyone = c.sources === 1 ? 'the source' : `all ${c.sources} sources`;
 
   let outcome: Outcome;
   if (udp) {
-    outcome = { tone: 'stopped', title: 'Traffic stopped', detail: `Firewall blocked UDP traffic. All ${total} units are dropped before they reach anything else.` };
-  } else if (each > WEB_CAPACITY) {
-    outcome = {
-      tone: 'overload', title: 'System Capacity Exceeded',
-      detail: c.perSource <= RATE_LIMIT
-        ? `Every source stays under the rate limit (${c.perSource} < ${RATE_LIMIT}), so nothing gets limited. Together ${c.sources} × ${c.perSource} = ${passed} units reach the load balancer. That is ${fmt(each)} per server, but each server handles only ${WEB_CAPACITY}.`
-        : `The rate limiter caps every source at ${RATE_LIMIT} units, but ${c.sources} sources still add up to ${c.sources} × ${RATE_LIMIT} = ${passed} units. That is ${fmt(each)} per server, more than the ${WEB_CAPACITY} each can handle.`,
-    };
-  } else if (each === WEB_CAPACITY) {
-    outcome = { tone: 'warn', title: 'Maximum capacity reached', detail: 'Both servers are at exactly 100%.' };
+    outcome = { tone: 'stopped', title: 'Blocked at the firewall', detail: `The firewall drops UDP. None of the ${total} units get any further.` };
+  } else if (banned) {
+    outcome = { tone: 'stopped', title: 'Banned', detail: `${c.perSource} per source is over the limit of ${RATE_LIMIT}, so the rate limiter banned ${everyone}.` };
+  } else if (overloaded) {
+    outcome = { tone: 'overload', title: 'Servers overloaded', detail: `No source goes over ${RATE_LIMIT}, so nobody gets banned. Together they bring ${passed} units to servers built for ${WEB_CAPACITY * 2}.` };
   } else if (each >= 50) {
-    outcome = {
-      tone: 'warn', title: 'High load, but the system holds',
-      detail: `${passed} units pass every layer: ${fmt(each)} units per server (${pct(each)} load). Close, but still under capacity.`,
-    };
+    outcome = { tone: 'warn', title: 'High load, but it holds', detail: `${passed} units get through, ${pct(each)} per server. Not quite enough.` };
   } else {
-    outcome = {
-      tone: 'stopped', title: 'Attack ineffective', subtitle: 'System stays available',
-      detail: dropped > 0
-        ? `The rate limiter caps each source individually: only ${passed} of ${total} units pass. Server load: ${pct(each)}.`
-        : `Only ${passed} units reach the servers: ${pct(each)} load each. Far too little to matter.`,
-    };
+    outcome = { tone: 'stopped', title: 'Barely noticed', detail: `Only ${passed} units reach the servers: ${pct(each)} load.` };
+  }
+
+  const steps: Step[] = [{ at: 'source', text: `${c.sources} × ${c.perSource} = ${total} units of ${name}.` }];
+  if (udp) {
+    steps.push({ at: 'firewall', text: 'Firewall: UDP is blocked, everything is dropped.' });
+  } else {
+    steps.push(
+      { at: 'firewall', text: 'Firewall: HTTP is allowed.' },
+      {
+        at: 'limiter',
+        text: banned
+          ? `Rate limiter: ${c.perSource} > ${RATE_LIMIT}, ${everyone} banned.`
+          : `Rate limiter: ${c.perSource} ≤ ${RATE_LIMIT}, nobody banned.`,
+      },
+    );
+    if (!banned) {
+      steps.push(
+        { at: 'balancer', text: `Load balancer: ${fmt(each)} to each server.` },
+        { at: 'server', text: `Load: ${pct(each)} per server${overloaded ? ', overloaded' : ''}.` },
+      );
+    }
   }
 
   const achieved: string[] = [];
   if (!udp) achieved.push('pass');
-  if (!udp && each > WEB_CAPACITY) achieved.push('cap');
+  if (overloaded) achieved.push('cap');
 
-  const plural = c.sources === 1 ? 'source' : 'sources';
-  const steps: Step[] = [{ at: 'source', text: `${c.sources} ${plural} × ${c.perSource} units = ${total} units of ${name} traffic.` }];
-  if (udp) {
-    steps.push(
-      { at: 'firewall', text: `Firewall: rule BLOCK UDP matches, so all ${total} units are blocked.` },
-      { at: 'server', text: '0 units reach the servers.' },
-    );
-  } else {
-    steps.push(
-      { at: 'firewall', text: `Firewall: HTTP is allowed, so ${total} units pass.` },
-      {
-        at: 'limiter',
-        text: c.perSource > RATE_LIMIT
-          ? `Rate limiter: each source is capped from ${c.perSource} to ${RATE_LIMIT}. ${dropped} dropped, ${passed} pass.`
-          : `Rate limiter: ${c.perSource} per source is under the limit of ${RATE_LIMIT}. Nothing is limited, ${passed} pass.`,
-      },
-      { at: 'balancer', text: `Load balancer: ${fmt(each)} to Web 1, ${fmt(each)} to Web 2.` },
-      { at: 'server', text: `Each server handles max ${WEB_CAPACITY}, so the load is ${pct(each)}${each > WEB_CAPACITY ? ': overloaded' : ''}.` },
-    );
-  }
-  const verdict: Verdict = udp ? 'firewall' : each > WEB_CAPACITY ? 'capacity' : dropped > 0 ? 'limiter' : 'holds';
+  const sources = sourceGroup(c.sources, c.perSource, 'fw', flow);
 
   return {
-    stage: {
+    display: { kind: 'network', stage: {
       nodes: [
         ...sources.nodes,
         {
@@ -472,12 +569,12 @@ function simulateBoss(c: Config): Simulation {
           effect: udp ? 'block' : undefined,
         },
         {
-          id: 'rl', kind: 'limiter', depth: 0.52, lateral: 0, title: 'Rate Limiter', detail: `max ${RATE_LIMIT} / source`,
-          badge: udp ? undefined : dropped > 0 ? { text: `−${dropped} dropped`, tone: 'warn' } : { text: 'under limit', tone: 'neutral' },
-          effect: dropped > 0 ? 'drop' : undefined,
+          id: 'rl', kind: 'limiter', depth: 0.52, lateral: 0, title: 'Rate Limiter', detail: `ban over ${RATE_LIMIT}`,
+          badge: udp ? undefined : banned ? { text: `${c.sources} banned`, tone: 'bad' } : { text: 'under limit', tone: 'neutral' },
+          tone: banned ? 'bad' : undefined,
         },
         { id: 'lb', kind: 'balancer', depth: 0.74, lateral: 0, title: 'Load Balancer', detail: 'splits 50 / 50' },
-        ...webServers(1, each, !udp),
+        ...webServers(1, 2, each, passed > 0),
       ],
       edges: [
         ...sources.edges,
@@ -486,61 +583,214 @@ function simulateBoss(c: Config): Simulation {
         { id: 'lb-w1', from: 'lb', to: 'web1', units: each, flows: [{ flow, units: each }] },
         { id: 'lb-w2', from: 'lb', to: 'web2', units: each, flows: [{ flow, units: each }] },
       ],
-      labels: c.sources > 1 ? [{ id: 'fan', depth: 0.17, lateral: c.sources >= 10 ? -1.12 : -0.98, text: `${c.sources} × ${c.perSource} = ${total}` }] : [],
-    },
+      labels: fanLabel(c.sources, c.perSource, 0.17),
+    } },
     outcome,
-    verdict,
     steps,
     metrics: [
       { label: 'TOTAL TRAFFIC', value: String(total), hint: `${c.sources} × ${c.perSource} ${name}` },
-      { label: 'FILTERED', value: String(total - passed), hint: `firewall ${total - afterFirewall} · limiter ${dropped}`, tone: total - passed > 0 ? 'good' : 'neutral' },
-      { label: 'AT SERVERS', value: String(passed), hint: `of 200 capacity`, tone: serverTone(each) },
-      { label: 'SERVER LOAD', value: pct(each), hint: 'per web server', tone: udp ? 'good' : serverTone(each) },
+      { label: 'STOPPED', value: String(total - passed), hint: udp ? 'by the firewall' : banned ? 'sources banned' : 'nothing stopped', tone: total - passed > 0 ? 'good' : 'neutral' },
+      { label: 'AT SERVERS', value: String(passed), hint: `of ${WEB_CAPACITY * 2} capacity`, tone: serverTone(each) },
+      { label: 'SERVER LOAD', value: pct(each), hint: 'per server', tone: passed > 0 ? serverTone(each) : 'good' },
     ],
     achieved,
   };
 }
 
-export function simulate(level: LevelId, config: Config): Simulation {
+function simulateCache(c: Config): Simulation {
+  const vector = VECTORS.find((item) => item.id === c.vector) ?? VECTORS[0];
+  const flow = vector.flow;
+  const kind = vector.name.toLowerCase();
+  const total = c.sources * c.perSource;
+  const atCdn = vector.blocked ? 0 : total;
+  const alarm = atCdn > CDN_ALARM;
+  const cached = !alarm && vector.id === 'static' ? atCdn * CACHE_HIT_RATE : 0;
+  const afterCache = alarm ? 0 : atCdn - cached;
+  const perSource = afterCache / c.sources;
+  const banned = afterCache > 0 && perSource > RATE_LIMIT;
+  const passed = banned ? 0 : afterCache;
+  const each = passed / CACHE_SERVERS;
+  const overloaded = each > WEB_CAPACITY;
+
+  let outcome: Outcome;
+  if (vector.blocked) {
+    outcome = { tone: 'stopped', title: 'Blocked at the firewall', detail: `The firewall drops UDP. None of the ${total} units get any further.` };
+  } else if (alarm) {
+    outcome = { tone: 'stopped', title: 'Alarm raised', detail: `${total} units is over the CDN's alarm level of ${CDN_ALARM}. It now challenges every visitor, and bots can't pass.` };
+  } else if (banned) {
+    outcome = { tone: 'stopped', title: 'Banned', detail: `${c.perSource} per source is over the limit of ${RATE_LIMIT}, so the rate limiter banned all ${c.sources} sources.` };
+  } else if (overloaded) {
+    outcome = { tone: 'overload', title: 'Servers overloaded', detail: `The CDN can't cache ${kind}, and ${total} units stays under its alarm. ${fmt(passed)} units hit servers built for ${CACHE_CAPACITY}.` };
+  } else if (cached > 0) {
+    outcome = { tone: 'stopped', title: 'The cache soaks it up', detail: `The CDN answers ${fmt(cached)} of ${total} units from its cache. Only ${fmt(passed)} reach the servers.` };
+  } else if (each >= 50) {
+    outcome = { tone: 'warn', title: 'High load, but it holds', detail: `${fmt(passed)} units reach the servers, ${pct(each)} each. Not quite enough.` };
+  } else {
+    outcome = { tone: 'stopped', title: 'Barely noticed', detail: `Only ${fmt(passed)} units reach the servers: ${pct(each)} load.` };
+  }
+
+  const steps: Step[] = [{ at: 'source', text: `${c.sources} × ${c.perSource} = ${total} units of ${kind}.` }];
+  if (vector.blocked) {
+    steps.push({ at: 'firewall', text: 'Firewall: UDP is blocked, everything is dropped.' });
+  } else {
+    steps.push(
+      { at: 'firewall', text: 'Firewall: HTTP is allowed.' },
+      {
+        at: 'cache',
+        text: alarm
+          ? `CDN: ${total} > ${CDN_ALARM}, alarm. Every request gets challenged.`
+          : cached > 0
+            ? `CDN: ${fmt(cached)} answered from the cache, ${fmt(afterCache)} pass.`
+            : `CDN: nothing to cache, and ${total} ≤ ${CDN_ALARM}, so no alarm.`,
+      },
+    );
+    if (!alarm) {
+      steps.push({
+        at: 'limiter',
+        text: banned
+          ? `Rate limiter: ${c.perSource} > ${RATE_LIMIT}, all ${c.sources} sources banned.`
+          : `Rate limiter: ${fmt(perSource)} ≤ ${RATE_LIMIT}, nobody banned.`,
+      });
+    }
+    if (passed > 0) {
+      steps.push(
+        { at: 'balancer', text: `Load balancer: ${fmt(each)} to each of the ${CACHE_SERVERS} servers.` },
+        { at: 'server', text: `Load: ${pct(each)} per server${overloaded ? ', overloaded' : ''}.` },
+      );
+    }
+  }
+
+  const achieved: string[] = [];
+  if (vector.id === 'dynamic' && !alarm) achieved.push('miss');
+  if (overloaded) achieved.push('cap');
+
+  const sources = sourceGroup(c.sources, c.perSource, 'fw', flow);
+
+  return {
+    display: { kind: 'network', stage: {
+      depthScale: 1.25,
+      nodes: [
+        ...sources.nodes,
+        {
+          id: 'fw', kind: 'firewall', depth: 0.3, lateral: 0, title: 'Firewall', detail: 'UDP blocked',
+          badge: vector.blocked ? { text: 'BLOCKED', tone: 'bad' } : { text: 'ALLOWED', tone: 'good' },
+          effect: vector.blocked ? 'block' : undefined,
+        },
+        {
+          id: 'cache', kind: 'cache', depth: 0.475, lateral: 0, title: 'Cache / CDN', detail: `alarm > ${CDN_ALARM}`,
+          badge: vector.blocked
+            ? undefined
+            : alarm
+              ? { text: 'ALARM', tone: 'bad' }
+              : cached > 0 ? { text: `−${fmt(cached)} cached`, tone: 'good' } : { text: 'not cached', tone: 'warn' },
+          tone: alarm ? 'bad' : undefined,
+          effect: cached > 0 ? 'drop' : undefined,
+        },
+        {
+          id: 'rl', kind: 'limiter', depth: 0.65, lateral: 0, title: 'Rate Limiter', detail: `ban over ${RATE_LIMIT}`,
+          badge: afterCache <= 0 ? undefined : banned ? { text: `${c.sources} banned`, tone: 'bad' } : { text: 'under limit', tone: 'neutral' },
+          tone: banned ? 'bad' : undefined,
+        },
+        { id: 'lb', kind: 'balancer', depth: 0.825, lateral: 0, title: 'Load Balancer', detail: 'splits 3 ways' },
+        ...webServers(1, CACHE_SERVERS, each, passed > 0),
+      ],
+      edges: [
+        ...sources.edges,
+        { id: 'fw-cache', from: 'fw', to: 'cache', units: atCdn, flows: [{ flow, units: atCdn }] },
+        { id: 'cache-rl', from: 'cache', to: 'rl', units: afterCache, flows: [{ flow, units: afterCache }] },
+        { id: 'rl-lb', from: 'rl', to: 'lb', units: passed, flows: [{ flow, units: passed }] },
+        ...[1, 2, 3].map((n) => ({ id: `lb-w${n}`, from: 'lb', to: `web${n}`, units: each, flows: [{ flow, units: each }] })),
+      ],
+      labels: fanLabel(c.sources, c.perSource, 0.21),
+    } },
+    outcome,
+    steps,
+    metrics: [
+      { label: 'TOTAL TRAFFIC', value: String(total), hint: `${c.sources} × ${c.perSource}` },
+      { label: 'AT THE CDN', value: String(atCdn), hint: `alarm above ${CDN_ALARM}`, tone: alarm ? 'bad' : 'neutral' },
+      { label: 'AT SERVERS', value: fmt(passed), hint: `of ${CACHE_CAPACITY} capacity`, tone: serverTone(each) },
+      { label: 'SERVER LOAD', value: pct(each), hint: 'per server', tone: passed > 0 ? serverTone(each) : 'good' },
+    ],
+    achieved,
+  };
+}
+
+function simulateCompute(c: Config): Simulation {
+  const request = REQUESTS.find((item) => item.id === c.request) ?? REQUESTS[0];
+  const rejected = request.adminOnly === true;
+  const cost = rejected ? REJECT_COST : request.cost;
+  const work = COMPUTE_REQUESTS * cost;
+  const cpu = (work / COMPUTE_CAPACITY) * 100;
+  const overloaded = cpu > 100;
+  const tone = serverTone(cpu);
+
+  let outcome: Outcome;
+  if (rejected) {
+    outcome = {
+      tone: 'stopped', title: 'Rejected at the door',
+      detail: `${request.why} Without a login the server answers "401 Unauthorized" after a quick check: ${fmt(REJECT_COST)} work units per request.`,
+    };
+  } else if (overloaded) {
+    outcome = {
+      tone: 'overload', title: 'CPU overloaded', subtitle: 'Same traffic, far more work',
+      detail: `${request.why} ${COMPUTE_REQUESTS} × ${fmt(cost)} = ${fmt(work)} work units per second, and the server manages ${COMPUTE_CAPACITY}.`,
+    };
+  } else {
+    outcome = {
+      tone: 'good', title: 'The server keeps up',
+      detail: `${request.why} ${COMPUTE_REQUESTS} × ${fmt(cost)} = ${fmt(work)} of ${COMPUTE_CAPACITY} work units.`,
+    };
+  }
+
+  return {
+    display: {
+      kind: 'server',
+      server: {
+        title: 'Web server',
+        detail: `${COMPUTE_CAPACITY} work units / s`,
+        requests: `${COMPUTE_SOURCES} × ${COMPUTE_PER_SOURCE} = ${COMPUTE_REQUESTS} requests / s`,
+        resources: [
+          { id: 'cpu', label: 'CPU', percent: cpu, detail: `${fmt(work)} / ${COMPUTE_CAPACITY} work units` },
+          { id: 'memory', label: 'Memory', percent: request.memory, detail: 'plenty left' },
+          { id: 'network', label: 'Network', percent: COMPUTE_NETWORK, detail: `${COMPUTE_REQUESTS} requests / s` },
+        ],
+        status: rejected
+          ? { tone: 'good', text: 'Rejecting requests: 401' }
+          : overloaded
+            ? { tone: 'bad', text: 'CPU overloaded' }
+            : { tone: 'good', text: 'Running normally' },
+      },
+    },
+    outcome,
+    steps: [
+      { at: 'source', text: `${COMPUTE_SOURCES} × ${COMPUTE_PER_SOURCE} = ${COMPUTE_REQUESTS} ${request.name} requests per second.` },
+      { at: 'limiter', text: `Rate limiter: ${COMPUTE_PER_SOURCE} ≤ ${RATE_LIMIT} per source, all pass.` },
+      {
+        at: 'server',
+        text: rejected
+          ? `No admin login: rejected after ${fmt(REJECT_COST)} work units each.`
+          : `Each one costs ${fmt(cost)} work units: ${COMPUTE_REQUESTS} × ${fmt(cost)} = ${fmt(work)}.`,
+      },
+      { at: 'server', text: `CPU at ${pct(cpu)}${overloaded ? ', overloaded' : ''}.` },
+    ],
+    metrics: [
+      { label: 'REQUESTS', value: `${COMPUTE_REQUESTS}/s`, hint: 'all under the rate limit' },
+      { label: 'COST', value: `${fmt(cost)} WU`, hint: rejected ? 'rejected with 401' : `per ${request.name} request` },
+      { label: 'WORK', value: `${fmt(work)}/${COMPUTE_CAPACITY}`, hint: 'work units per second', tone },
+      { label: 'CPU', value: pct(cpu), hint: overloaded ? 'server overloaded' : 'of compute capacity', tone },
+    ],
+    achieved: [`seen-${request.id}`, overloaded ? 'overload' : 'calm'],
+  };
+}
+
+export function simulate(level: SimLevelId, config: Config): Simulation {
   switch (level) {
     case 'firewall': return simulateFirewall(config);
     case 'balancer': return simulateBalancer(config);
     case 'limiter': return simulateLimiter(config);
-    case 'boss': return simulateBoss(config);
+    case 'vector': return simulateVector(config);
+    case 'cache': return simulateCache(config);
+    case 'compute': return simulateCompute(config);
   }
 }
 
-// One row of the Final Boss test log: a configuration and which layer decided it.
-export interface LogEntry {
-  key: string;
-  protocol: Protocol;
-  sources: number;
-  perSource: number;
-  total: number;
-  atServers: number;
-  loadPercent: number;
-  verdict: Verdict;
-  tone: OutcomeTone;
-  title: string;
-}
-
-export function logEntry(c: Config): LogEntry {
-  const sim = simulateBoss(c);
-  const total = c.sources * c.perSource;
-  const atServers = c.protocol === 'udp' ? 0 : c.sources * Math.min(c.perSource, RATE_LIMIT);
-  return {
-    key: `${c.protocol}-${c.sources}-${c.perSource}`,
-    protocol: c.protocol,
-    sources: c.sources,
-    perSource: c.perSource,
-    total,
-    atServers,
-    loadPercent: (atServers / 2 / WEB_CAPACITY) * 100,
-    verdict: sim.verdict,
-    tone: sim.outcome.tone,
-    title: sim.outcome.title,
-  };
-}
-
-// Every combination the Final Boss controls allow (2 protocols × 3 source counts × 3 intensities).
-export const BOSS_COMBINATIONS = (['udp', 'http'] as Protocol[]).length * BOSS_SOURCES.length * BOSS_INTENSITIES.length;

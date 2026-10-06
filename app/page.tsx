@@ -1,52 +1,73 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
-import { NetworkStage } from './components/NetworkStage';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { OptionList, RequestPicker, Segmented, Slider } from './components/Controls';
+import { DefenseLevel } from './components/DefenseLevel';
 import { Icon, type IconName } from './components/Icons';
+import { AhaCard, Fact, Objectives, SetupCard, isComplete } from './components/LevelParts';
+import { NetworkStage } from './components/NetworkStage';
 import { ScrollArea } from './components/ScrollArea';
-import { TestLog } from './components/TestLog';
+import { ServerDashboard } from './components/ServerDashboard';
 import { ThemeToggle } from './components/ThemeToggle';
 import {
   BALANCER_BANDS,
-  BOSS_COMBINATIONS,
-  BOSS_INTENSITIES,
-  BOSS_SOURCES,
+  CACHE_HIT_RATE,
+  CACHE_SERVERS,
+  CACHE_SOURCES,
+  CDN_ALARM,
+  COMPUTE_CAPACITY,
+  COMPUTE_PER_SOURCE,
+  COMPUTE_REQUESTS,
+  COMPUTE_SOURCES,
   DEFAULT_CONFIGS,
   DISTRIBUTED,
+  INTENSITIES,
   LEVELS,
   LIMITER_NORMAL_TRAFFIC,
   LIMITER_SERVER_CAPACITY,
   RATE_LIMIT,
+  REQUESTS,
+  VECTORS,
+  VECTOR_SOURCES,
   WEB_CAPACITY,
-  logEntry,
   simulate,
   type Config,
-  type LevelDef,
+  type DefenseId,
+  type Flow,
   type LevelId,
-  type LogEntry,
   type OutcomeTone,
   type Protocol,
+  type SimLevelId,
   type SourceMode,
   type StepAt,
+  type Vector,
 } from './lib/simulation';
 
 type View = LevelId | 'debrief';
 
-const NO_PROGRESS: Record<LevelId, string[]> = { firewall: [], balancer: [], limiter: [], boss: [] };
+const NO_PROGRESS: Record<LevelId, string[]> = { firewall: [], balancer: [], limiter: [], vector: [], cache: [], compute: [], defense: [] };
 
 const OUTCOME_ICON: Record<OutcomeTone, IconName> = { good: 'check', stopped: 'x', warn: 'alert', overload: 'zap' };
 const STEP_ICON: Record<StepAt, IconName> = {
   source: 'attacker',
   users: 'users',
   firewall: 'firewall',
+  cache: 'cache',
   limiter: 'limiter',
   balancer: 'balancer',
   server: 'server',
 };
 
-function isComplete(level: LevelDef, achieved: string[]) {
-  return level.objectives.every((objective) => achieved.includes(objective.id));
-}
+const CAPTIONS: Record<SimLevelId, { flow: Flow; label: string }[]> = {
+  firewall: [{ flow: 'udp', label: 'UDP' }, { flow: 'http', label: 'HTTP' }],
+  balancer: [{ flow: 'http', label: 'Attack traffic' }],
+  limiter: [{ flow: 'http', label: 'Attack traffic' }, { flow: 'legit', label: 'Normal users' }],
+  vector: [{ flow: 'udp', label: 'UDP' }, { flow: 'http', label: 'HTTP' }],
+  cache: VECTORS.map((vector) => ({ flow: vector.flow, label: vector.name })),
+  compute: [],
+};
+
+const NETWORK_TITLE: Partial<Record<LevelId, string>> = { vector: 'Target system', cache: 'Target system', compute: 'Server' };
 
 export default function Home() {
   const [view, setView] = useState<View>('firewall');
@@ -54,30 +75,31 @@ export default function Home() {
   const [live, setLive] = useState(false);
   const [settledKey, setSettledKey] = useState<string | null>(null);
   const [achieved, setAchieved] = useState(NO_PROGRESS);
-  const [bossLog, setBossLog] = useState<LogEntry[]>([]);
 
   const level = LEVELS.find((item) => item.id === view);
+  const simLevel: SimLevelId | null = level && level.id !== 'defense' ? level.id : null;
   const config = level ? configs[level.id] : null;
-  const sim = useMemo(() => (level && config ? simulate(level.id, config) : null), [level, config]);
+  const sim = useMemo(() => (simLevel && config ? simulate(simLevel, config) : null), [simLevel, config]);
   const configKey = level ? `${level.id}:${JSON.stringify(config)}` : '';
   const analysisReady = live && settledKey === configKey;
 
+  const record = useCallback((id: LevelId, ids: string[]) => {
+    setAchieved((previous) => {
+      const merged = Array.from(new Set([...previous[id], ...ids]));
+      return merged.length === previous[id].length ? previous : { ...previous, [id]: merged };
+    });
+  }, []);
+  const recordDefense = useCallback((ids: string[]) => record('defense', ids), [record]);
+
   // Once traffic settles on a configuration, show the analysis and record objectives.
   useEffect(() => {
-    if (!live || !sim || !level || !config) return;
+    if (!live || !sim || !level) return;
     const timer = window.setTimeout(() => {
       setSettledKey(configKey);
-      setAchieved((previous) => {
-        const merged = Array.from(new Set([...previous[level.id], ...sim.achieved]));
-        return merged.length === previous[level.id].length ? previous : { ...previous, [level.id]: merged };
-      });
-      if (level.id === 'boss') {
-        const entry = logEntry(config);
-        setBossLog((previous) => (previous.some((item) => item.key === entry.key) ? previous : [...previous, entry]));
-      }
+      record(level.id, sim.achieved);
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [live, sim, level, config, configKey]);
+  }, [live, sim, level, configKey, record]);
 
   function selectView(next: View) {
     setView(next);
@@ -94,7 +116,6 @@ export default function Home() {
   function restart() {
     setConfigs(DEFAULT_CONFIGS);
     setAchieved(NO_PROGRESS);
-    setBossLog([]);
     selectView('firewall');
   }
 
@@ -117,7 +138,6 @@ export default function Home() {
       <header className="topbar">
         <div className="brand">
           <h1>DDoS Defense Simulator</h1>
-          <p>Play the attacker and see what each layer of protection stops, and where it gives out.</p>
         </div>
         <div className="topbar-nav">
           <nav className="stepper" aria-label="Choose level">
@@ -130,6 +150,8 @@ export default function Home() {
                   className={`step ${current ? 'current' : ''} ${done ? 'done' : ''}`}
                   onClick={() => selectView(item.id)}
                   aria-current={current ? 'step' : undefined}
+                  aria-label={`Level ${index + 1}: ${item.name}`}
+                  title={item.name}
                 >
                   <span className="step-mark">{done ? <Icon name="check" size={12} strokeWidth={2.5} /> : index + 1}</span>
                   <span className="step-name">{item.name}</span>
@@ -141,7 +163,7 @@ export default function Home() {
               onClick={() => selectView('debrief')}
               aria-current={view === 'debrief' ? 'step' : undefined}
             >
-              <span className="step-name">Debrief</span>
+              <span className="step-name debrief-name">Debrief</span>
             </button>
           </nav>
           <ThemeToggle />
@@ -149,13 +171,22 @@ export default function Home() {
       </header>
 
       <main className="content">
-        {level && config && sim ? (
+        {level?.id === 'defense' && config ? (
+          <DefenseLevel
+            level={level}
+            defenses={config.defenses}
+            onDefensesChange={(defenses: DefenseId[]) => updateConfig({ defenses })}
+            achieved={achieved.defense}
+            onAchieve={recordDefense}
+            onNext={() => selectView(nextView)}
+          />
+        ) : level && config && sim ? (
           <section className="simulator-grid" key={level.id}>
             <aside className="panel config-panel">
               <ScrollArea>
                 <div className="panel-heading">
-                  <p className="level-label">{level.id === 'boss' ? 'Final level' : `Level ${levelIndex + 1} of 4`}</p>
-                  <h2>{level.id === 'boss' ? 'Find the attack vector' : level.name}</h2>
+                  <p className="level-label">Level {levelIndex + 1} of {LEVELS.length}</p>
+                  <h2>{level.title ?? level.name}</h2>
                   <p className="goal">{level.goal}</p>
                 </div>
 
@@ -166,12 +197,15 @@ export default function Home() {
                   config={config}
                   onChange={updateConfig}
                   sourceUnlocked={achieved.limiter.includes('single')}
+                  achieved={achieved[level.id]}
                 />
 
-                <p className="hint">
-                  <Icon name="info" size={14} />
-                  <span><b>Hint:</b> {level.hint}</span>
-                </p>
+                {level.hint && (
+                  <p className="hint">
+                    <Icon name="info" size={14} />
+                    <span><b>Hint:</b> {level.hint}</span>
+                  </p>
+                )}
 
                 <Objectives level={level} achieved={achieved[level.id]} />
               </ScrollArea>
@@ -189,25 +223,23 @@ export default function Home() {
 
             <section className="panel network-panel">
               <div className="network-heading">
-                <h2>{level.id === 'boss' ? 'Target system' : 'Network'}</h2>
+                <h2>{NETWORK_TITLE[level.id] ?? 'Network'}</h2>
                 <span className={`live-status ${live ? 'on' : ''}`}><i />{live ? 'Traffic live' : 'Ready'}</span>
               </div>
 
               <ScrollArea>
-                <div className={`stage-frame ${live ? 'running' : ''}`}>
-                  <NetworkStage stage={sim.stage} live={live} />
-                  <div className="stage-caption">
-                    {level.id === 'firewall' || level.id === 'boss' ? (
-                      <>
-                        <span><i className="udp-dot" /> UDP</span>
-                        <span><i className="http-dot" /> HTTP</span>
-                      </>
-                    ) : (
-                      <span><i className="http-dot" /> Attack traffic</span>
-                    )}
-                    {level.id === 'limiter' && <span><i className="legit-dot" /> Normal users</span>}
+                {sim.display.kind === 'network' ? (
+                  <div className={`stage-frame ${live ? 'running' : ''}`}>
+                    <NetworkStage stage={sim.display.stage} live={live} />
+                    <div className="stage-caption">
+                      {simLevel && CAPTIONS[simLevel].map((item) => (
+                        <span key={item.label}><i className={`dot flow-${item.flow}`} /> {item.label}</span>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <ServerDashboard server={sim.display.server} live={live} />
+                )}
 
                 <div className="stats-grid" aria-live="polite">
                   {sim.metrics.map((metric) => (
@@ -248,8 +280,6 @@ export default function Home() {
                   </div>
                 )}
 
-                {level.id === 'boss' && <TestLog entries={bossLog} total={BOSS_COMBINATIONS} />}
-
                 {complete && (
                   <AhaCard ref={ahaRef} level={level} onNext={() => selectView(nextView)} />
                 )}
@@ -261,21 +291,6 @@ export default function Home() {
         )}
       </main>
     </div>
-  );
-}
-
-function SetupCard({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <div className="setup-card">
-      <p className="section-label">{title}</p>
-      {children}
-    </div>
-  );
-}
-
-function Fact({ icon, label, value }: { icon: IconName; label: string; value: string }) {
-  return (
-    <div><dt><Icon name={icon} size={14} />{label}</dt><dd>{value}</dd></div>
   );
 }
 
@@ -310,26 +325,48 @@ function LevelSetup({ id }: { id: LevelId }) {
           </dl>
         </SetupCard>
       );
-    case 'boss':
+    case 'vector':
       return (
-        <SetupCard title="Target system">
+        <SetupCard title="Target">
           <dl className="facts">
             <Fact icon="firewall" label="Firewall" value="UDP blocked" />
-            <Fact icon="limiter" label="Rate limiter" value={`max. ${RATE_LIMIT} / source`} />
-            <Fact icon="balancer" label="Load balancer" value={`2 × max. ${WEB_CAPACITY}`} />
-            <div className="total"><dt>Total capacity</dt><dd>{WEB_CAPACITY * 2} units</dd></div>
+            <Fact icon="limiter" label="Rate limiter" value={`over ${RATE_LIMIT} / source → ban`} />
+            <Fact icon="server" label="Servers" value={`2 × ${WEB_CAPACITY}`} />
           </dl>
-          <p className="task">Find a traffic configuration that gets past every protection mechanism and brings <b>more than {WEB_CAPACITY * 2} units</b> to the servers.</p>
         </SetupCard>
       );
+    case 'cache':
+      return (
+        <SetupCard title="Target">
+          <dl className="facts">
+            <Fact icon="firewall" label="Firewall" value="UDP blocked" />
+            <Fact icon="cache" label="CDN cache" value={`${CACHE_HIT_RATE * 100} % of static`} />
+            <Fact icon="alert" label="CDN alarm" value={`above ${CDN_ALARM} / s`} />
+            <Fact icon="limiter" label="Rate limiter" value={`over ${RATE_LIMIT} / source → ban`} />
+            <Fact icon="server" label="Servers" value={`${CACHE_SERVERS} × ${WEB_CAPACITY}`} />
+          </dl>
+        </SetupCard>
+      );
+    case 'compute':
+      return (
+        <SetupCard title="Setup">
+          <dl className="facts">
+            <Fact icon="attacker" label="Traffic (fixed)" value={`${COMPUTE_SOURCES} × ${COMPUTE_PER_SOURCE} = ${COMPUTE_REQUESTS} / s`} />
+            <Fact icon="cpu" label="Server CPU" value={`${COMPUTE_CAPACITY} work units / s`} />
+          </dl>
+        </SetupCard>
+      );
+    case 'defense':
+      return null;
   }
 }
 
-function LevelControls({ id, config, onChange, sourceUnlocked }: {
+function LevelControls({ id, config, onChange, sourceUnlocked, achieved }: {
   id: LevelId;
   config: Config;
   onChange: (patch: Partial<Config>) => void;
   sourceUnlocked: boolean;
+  achieved: string[];
 }) {
   switch (id) {
     case 'firewall':
@@ -395,194 +432,78 @@ function LevelControls({ id, config, onChange, sourceUnlocked }: {
         </>
       );
     }
-    case 'boss':
+    case 'vector':
       return (
         <>
           <OptionList<Protocol>
-            label="1. Protocol"
+            label="Protocol"
             value={config.protocol}
             onChange={(protocol) => onChange({ protocol })}
             options={[
-              { value: 'udp', title: 'UDP', description: 'Blocked by the firewall', swatch: 'udp' },
-              { value: 'http', title: 'HTTP', description: 'Allowed by the firewall, reaches the rate limiter', swatch: 'http' },
+              { value: 'udp', title: 'UDP', description: 'Raw packets, no web requests', swatch: 'udp' },
+              { value: 'http', title: 'HTTP', description: 'Ordinary web requests', swatch: 'http' },
             ]}
           />
-          <Segmented
-            label="2. Number of sources"
-            value={config.sources}
-            onChange={(sources) => onChange({ sources })}
-            options={BOSS_SOURCES.map((count) => ({ value: count, title: `${count}`, caption: `max. ${count * RATE_LIMIT} pass` }))}
-          />
-          <Segmented
-            label="3. Traffic per source"
-            value={config.perSource}
-            onChange={(perSource) => onChange({ perSource })}
-            options={BOSS_INTENSITIES.map((item) => ({
-              value: item.units,
-              title: item.id,
-              caption: item.units > RATE_LIMIT ? `${item.units} units → ${RATE_LIMIT}` : `${item.units} units`,
-            }))}
-          />
-          <div className="formula">
-            <span>Total traffic</span>
-            <strong>{config.sources} × {config.perSource} = {config.sources * config.perSource} units</strong>
-          </div>
+          <SourcesAndRate config={config} onChange={onChange} sources={VECTOR_SOURCES} />
         </>
       );
+    case 'cache':
+      return (
+        <>
+          <OptionList<Vector>
+            label="Attack type"
+            value={config.vector}
+            onChange={(vector) => onChange({ vector })}
+            options={VECTORS.map((vector) => ({ value: vector.id, title: vector.name, description: vector.description, swatch: vector.flow }))}
+          />
+          <SourcesAndRate config={config} onChange={onChange} sources={CACHE_SOURCES} />
+        </>
+      );
+    case 'compute':
+      return (
+        <RequestPicker
+          value={config.request}
+          onChange={(request) => onChange({ request })}
+          revealed={REQUESTS.filter((request) => achieved.includes(`seen-${request.id}`)).map((request) => request.id)}
+        />
+      );
+    case 'defense':
+      return null;
   }
 }
 
-function OptionList<T extends string>({ label, tag, options, value, onChange, disabled }: {
-  label: string;
-  tag?: string;
-  options: { value: T; title: string; description: string; swatch: 'udp' | 'http' }[];
-  value: T;
-  onChange: (value: T) => void;
-  disabled?: boolean;
+function SourcesAndRate({ config, onChange, sources }: {
+  config: Config;
+  onChange: (patch: Partial<Config>) => void;
+  sources: number[];
 }) {
   return (
-    <fieldset className="control" disabled={disabled}>
-      <legend className="section-label">{label}{tag && <span className="new-tag">{tag}</span>}</legend>
-      <div className="option-list" role="radiogroup" aria-label={label}>
-        {options.map((option) => (
-          <button
-            type="button"
-            role="radio"
-            aria-checked={value === option.value}
-            className={`option ${value === option.value ? 'selected' : ''}`}
-            key={option.value}
-            onClick={() => onChange(option.value)}
-          >
-            <span className="radio" aria-hidden="true" />
-            <span className="option-text">
-              <strong><i className={`swatch ${option.swatch}`} />{option.title}</strong>
-              <small>{option.description}</small>
-            </span>
-          </button>
-        ))}
-      </div>
-    </fieldset>
-  );
-}
-
-function Segmented({ label, options, value, onChange }: {
-  label: string;
-  options: { value: number; title: string; caption: string }[];
-  value: number;
-  onChange: (value: number) => void;
-}) {
-  return (
-    <fieldset className="control">
-      <legend className="section-label">{label}</legend>
-      <div className="segmented" role="radiogroup" aria-label={label}>
-        {options.map((option) => (
-          <button
-            type="button"
-            role="radio"
-            aria-checked={value === option.value}
-            key={option.value}
-            className={value === option.value ? 'selected' : ''}
-            onClick={() => onChange(option.value)}
-          >
-            <strong>{option.title}</strong>
-            <small>{option.caption}</small>
-          </button>
-        ))}
-      </div>
-    </fieldset>
-  );
-}
-
-function Slider({ label, min, max, value, onChange, disabled, note }: {
-  label: string;
-  min: number;
-  max: number;
-  value: number;
-  onChange: (value: number) => void;
-  disabled?: boolean;
-  note?: string;
-}) {
-  const fill = ((value - min) / (max - min)) * 100;
-  return (
-    <div className={`control slider ${disabled ? 'disabled' : ''}`}>
-      <div className="slider-head">
-        <label className="section-label" htmlFor={`slider-${label}`}>{label}</label>
-        <output htmlFor={`slider-${label}`}>{value} <small>units</small></output>
-      </div>
-      <input
-        id={`slider-${label}`}
-        type="range"
-        min={min}
-        max={max}
-        step={10}
-        value={value}
-        disabled={disabled}
-        onChange={(event) => onChange(Number(event.target.value))}
-        style={{ '--fill': `${fill}%` } as CSSProperties}
+    <>
+      <Segmented
+        label="Sources"
+        value={config.sources}
+        onChange={(count) => onChange({ sources: count })}
+        options={sources.map((count) => ({ value: count, title: `${count}` }))}
       />
-      <div className="slider-scale"><span>{min}</span><span>Traffic units</span><span>{max}</span></div>
-      {note && <p className="slider-note">{note}</p>}
-    </div>
-  );
-}
-
-function Objectives({ level, achieved }: { level: LevelDef; achieved: string[] }) {
-  const count = level.objectives.filter((objective) => achieved.includes(objective.id)).length;
-  return (
-    <div className="objectives">
-      <div className="objectives-head">
-        <p className="section-label">{level.id === 'boss' ? 'Goal' : 'Objectives'}</p>
-        <span>{count} / {level.objectives.length}</span>
+      <Segmented
+        label="Units per source"
+        value={config.perSource}
+        onChange={(perSource) => onChange({ perSource })}
+        options={INTENSITIES.map((item) => ({ value: item.units, title: item.id, caption: `${item.units} units` }))}
+      />
+      <div className="formula">
+        <span>Total</span>
+        <strong>{config.sources} × {config.perSource} = {config.sources * config.perSource} units</strong>
       </div>
-      <ul>
-        {level.objectives.map((objective) => {
-          const done = achieved.includes(objective.id);
-          return (
-            <li key={objective.id} className={done ? 'done' : ''}>
-              <span className="check">{done && <Icon name="check" size={12} strokeWidth={3} />}</span>
-              {objective.label}
-            </li>
-          );
-        })}
-      </ul>
-    </div>
-  );
-}
-
-function AhaCard({ ref, level, onNext }: { ref: Ref<HTMLDivElement>; level: LevelDef; onNext: () => void }) {
-  return (
-    <div className="aha-card" ref={ref}>
-      <h3>{level.id === 'boss' ? 'You found the attack vector' : 'What you just discovered'}</h3>
-      <p>{level.aha}</p>
-      {level.id === 'limiter' && (
-        <div className="ddos-explainer">
-          <p>That is what the second <b>D</b> in DDoS stands for:</p>
-          <div className="acronym">
-            <span><b>D</b>istributed</span>
-            <span><b>D</b>enial</span>
-            <span><b>o</b>f</span>
-            <span><b>S</b>ervice</span>
-          </div>
-          <p>The traffic does not come from one source, but from many distributed sources.</p>
-        </div>
-      )}
-      {level.id === 'boss' && (
-        <p className="aha-note">
-          The solution: <b>HTTP</b> gets past the firewall, and <b>30 sources</b> sending <b>8 units</b> each stay under the
-          rate limit, so nothing is cut: 30 × 8 = 240 units reach the load balancer, more than the 200 units both servers can handle together.
-        </p>
-      )}
-      <button className="primary-button" onClick={onNext}>
-        {level.id === 'boss' ? 'Open debrief' : 'Next level'}
-        <Icon name="arrow-right" size={14} />
-      </button>
-    </div>
+    </>
   );
 }
 
 const LAYERS: { icon: IconName; name: string; job: string; limit: string }[] = [
   { icon: 'firewall', name: 'Firewall', job: 'Blocks certain types of traffic', limit: 'Only helps if a matching rule exists.' },
+  { icon: 'cache', name: 'Cache / CDN', job: 'Answers static requests by itself', limit: 'Dynamic requests still reach the servers.' },
   { icon: 'limiter', name: 'Rate limiter', job: 'Limits traffic per source', limit: 'Many small sources stay under the limit.' },
+  { icon: 'bot', name: 'Bot challenge', job: 'Filters out most bot traffic', limit: 'Some bots still get through.' },
   { icon: 'balancer', name: 'Load balancer', job: 'Spreads the load', limit: 'Adds no capacity; it only distributes it.' },
 ];
 
@@ -620,14 +541,17 @@ function Debrief({ achieved, onRestart, onOpen }: {
             <span><Icon name="server" size={16} />Web 1</span>
             <span><Icon name="server" size={16} />Web 2</span>
           </div>
+          <p className="layer-servers-note">
+            <Icon name="cpu" size={14} />Expensive requests can max out the CPU even at low traffic.
+          </p>
         </div>
       </div>
 
       <div className="debrief-side">
         <div className="panel insight">
-          <h2>There is no single protection against DDoS attacks.</h2>
-          <p>A firewall, a rate limiter and a load balancer each solve a different problem.</p>
-          <p className="insight-strong">Only several layers of protection together make a system more resilient.</p>
+          <h2>There is no single DDoS protection.</h2>
+          <p>Firewalls stop some traffic. Rate limits stop other traffic. Distributed attacks can bypass simple limits.</p>
+          <p className="insight-strong">Effective defense requires multiple layers.</p>
         </div>
 
         <div className="panel recap">

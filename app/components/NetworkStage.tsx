@@ -5,20 +5,28 @@ import type { Flow, Stage, StageEdge, StageNode } from '../lib/simulation';
 import { fmt } from '../lib/simulation';
 import { Icon, type IconName } from './Icons';
 
-const FLOW_COLOR: Record<Flow, string> = { udp: 'var(--udp)', http: 'var(--http)', legit: 'var(--legit)' };
+const FLOW_COLOR: Record<Flow, string> = {
+  udp: 'var(--udp)', static: 'var(--static)', http: 'var(--http)', bot: 'var(--bot)', legit: 'var(--legit)',
+};
 const ICON: Record<Exclude<StageNode['kind'], 'swarm'>, IconName> = {
-  attacker: 'attacker', users: 'users', firewall: 'firewall', limiter: 'limiter', balancer: 'balancer', server: 'server',
+  attacker: 'attacker', users: 'users', firewall: 'firewall', cache: 'cache', limiter: 'limiter', balancer: 'balancer', server: 'server',
 };
 
 const BOX = { w: 128, h: 92 };
 const DETAIL_CHAR = 7.3; // approx. width of one 12px mono character
 const SWARM_R = 14;
 
-const GEOMETRY = {
-  h: { width: 1000, height: 420, place: (d: number, l: number) => ({ x: 72 + d * 856, y: 210 + l * 170 }) },
-  v: { width: 440, height: 780, place: (d: number, l: number) => ({ x: 220 + l * 168, y: 58 + d * 664 }) },
-};
-type Orientation = keyof typeof GEOMETRY;
+type Orientation = 'h' | 'v';
+
+function geometry(orientation: Orientation, depthScale: number) {
+  if (orientation === 'h') {
+    const span = 856 * depthScale;
+    return { width: 144 + span, height: 420, place: (d: number, l: number) => ({ x: 72 + d * span, y: 210 + l * 170 }) };
+  }
+  const span = 664 * depthScale;
+  return { width: 440, height: 116 + span, place: (d: number, l: number) => ({ x: 220 + l * 168, y: 58 + d * span }) };
+}
+type Geometry = ReturnType<typeof geometry>;
 
 function useMedia(query: string) {
   return useSyncExternalStore(
@@ -32,8 +40,8 @@ function useMedia(query: string) {
   );
 }
 
-function anchor(node: StageNode, orientation: Orientation, side: 'out' | 'in') {
-  const { x, y } = GEOMETRY[orientation].place(node.depth, node.lateral);
+function anchor(node: StageNode, geo: Geometry, orientation: Orientation, side: 'out' | 'in') {
+  const { x, y } = geo.place(node.depth, node.lateral);
   const sign = side === 'out' ? 1 : -1;
   const half = node.kind === 'swarm' ? SWARM_R : orientation === 'h' ? BOX.w / 2 : BOX.h / 2;
   return orientation === 'h' ? { x: x + sign * half, y } : { x, y: y + sign * half };
@@ -67,7 +75,7 @@ export function NetworkStage({ stage, live }: { stage: Stage; live: boolean }) {
   const narrow = useMedia('(max-width: 640px)');
   const reducedMotion = useMedia('(prefers-reduced-motion: reduce)');
   const orientation: Orientation = narrow ? 'v' : 'h';
-  const geo = GEOMETRY[orientation];
+  const geo = geometry(orientation, stage.depthScale ?? 1);
   const nodes = new Map(stage.nodes.map((node) => [node.id, node]));
   const clampX = (x: number, w: number) => Math.min(geo.width - w / 2 - 4, Math.max(w / 2 + 4, x));
 
@@ -98,8 +106,8 @@ export function NetworkStage({ stage, live }: { stage: Stage; live: boolean }) {
         const from = nodes.get(edge.from);
         const to = nodes.get(edge.to);
         if (!from || !to) return null;
-        const a = anchor(from, orientation, 'out');
-        const b = anchor(to, orientation, 'in');
+        const a = anchor(from, geo, orientation, 'out');
+        const b = anchor(to, geo, orientation, 'in');
         const path = `M ${a.x.toFixed(1)} ${a.y.toFixed(1)} L ${b.x.toFixed(1)} ${b.y.toFixed(1)}`;
         const length = Math.hypot(b.x - a.x, b.y - a.y);
         const dur = Math.max(0.9, length / 210);

@@ -1,0 +1,102 @@
+.defense-legend { width: 100%; justify-content: space-between; }
+.points { display: inline-flex; align-items: center; gap: 2px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.points .point { color: var(--accent); }
+.points .point.spent { color: var(--line-strong); }
+.points span { margin-left: 6px; color: var(--text); font: 12px var(--mono); }
+
+.defense-list { display: grid; gap: 6px; }
+.defense-card { width: 100%; display: flex; align-items: center; gap: 12px; padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); text-align: left; cursor: pointer; transition: border-color .15s, background .15s, opacity .15s; }
+.defense-card:hover:not(:disabled) { border-color: var(--muted); }
+.defense-card.selected { border-color: var(--accent); background: var(--accent-soft); }
+.defense-card:disabled { opacity: .45; }
+.checkbox { flex: none; display: grid; place-items: center; width: 16px; height: 16px; border: 1.5px solid var(--line-strong); border-radius: 3px; background: var(--surface); color: var(--on-accent); }
+.defense-card.selected .checkbox { border-color: var(--accent-fill); background: var(--accent-fill); }
+.defense-text { flex: 1; min-width: 0; }
+.defense-text strong, .defense-text small { display: block; }
+.defense-text strong { display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 600; }
+.defense-text strong svg { flex: none; color: var(--muted); }
+.defense-text small { margin-top: 1px; color: var(--muted); font-size: 12px; }
+.defense-cost { flex: none; display: inline-flex; gap: 1px; color: var(--accent); }
+
+.wave-track { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 0 0 12px; padding: 0; list-style: none; }
+.wave-chip { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); transition: border-color .2s, background .2s; }
+.wave-chip > span:last-child { min-width: 0; }
+.wave-chip strong, .wave-chip small { display: block; }
+.wave-chip strong { font-size: 13px; font-weight: 650; }
+.wave-chip small { overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.wave-mark { flex: none; display: grid; place-items: center; width: 22px; height: 22px; border: 1.5px solid var(--line-strong); border-radius: 50%; color: var(--muted); font: 11px var(--mono); }
+.wave-chip.current { border-color: var(--bad); }
+.wave-chip.current .wave-mark { border-color: var(--bad); color: var(--bad); animation: wave-pulse 1.2s ease-in-out infinite; }
+.wave-chip.done .wave-mark { border-color: var(--ok); background: var(--ok); color: var(--on-ok); }
+.wave-chip.failed { border-color: var(--bad); background: var(--bad-soft); }
+.wave-chip.failed .wave-mark { border-color: var(--bad); background: var(--bad); color: var(--surface); }
+@keyframes wave-pulse { 50% { box-shadow: 0 0 0 4px var(--bad-soft); } }
+
+.wave-banner { display: flex; align-items: flex-start; gap: 14px; padding: 14px 18px; border: 1px solid var(--line); border-left: 3px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); }
+.wave-banner > div { flex: 1; min-width: 0; }
+.wave-banner h3 { margin-bottom: 4px; font-size: 16px; font-weight: 650; }
+.wave-banner p { color: var(--muted); font-size: 14px; line-height: 1.5; }
+.wave-banner.alert { border-color: var(--bad); border-left-color: var(--bad); background: var(--bad-soft); }
+.wave-banner.alert .analysis-icon { background: var(--surface); color: var(--bad); }
+.wave-banner.alert p { color: var(--text); }
+.alert-title { color: var(--bad); letter-spacing: .04em; text-transform: uppercase; }
+.wave-banner.survived { border-left-color: var(--ok); }
+.wave-banner.survived .analysis-icon { background: var(--ok-soft); color: var(--ok); }
+.impact-note { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.spinner-dot { flex: none; width: 12px; height: 12px; border: 2px solid var(--line-strong); border-top-color: var(--bad); border-radius: 50%; animation: spin .8s linear infinite; }
+
+.service-down { margin-top: 0; }
+.service-down h3 { color: var(--bad); letter-spacing: .05em; text-transform: uppercase; }
+.reasons { display: grid; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
+.reason { padding: 8px 12px; border-radius: var(--radius-sm); background: var(--bad-soft); color: var(--text); font-size: 14px; line-height: 1.5; }
+
+.setup-card.intel { border-left: 3px solid var(--warn); }
+.setup-card.intel p:last-child { font-size: 14px; line-height: 1.5; }
+
+.pipeline { display: grid; gap: 12px; margin-top: 12px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
+.pipe-empty { color: var(--muted); font-size: 13px; }
+.pipe-row { display: grid; gap: 5px; }
+.pipe-head { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.pipe-icon { flex: none; display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--muted); }
+.pipe-head strong { flex: 1; min-width: 0; overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.pipe-removed { color: var(--ok); font: 600 13px var(--mono); }
+.pipe-total { min-width: 56px; text-align: right; font: 600 14px var(--mono); }
+.pipe-total small { color: var(--muted); font-weight: 400; }
+.pipe-row.servers .pipe-icon { color: var(--ok); }
+.pipe-row.over .pipe-icon { border-color: var(--bad); background: var(--bad-soft); color: var(--bad); }
+.pipe-row.over .pipe-total { color: var(--bad); }
+.pipe-bar { position: relative; display: flex; height: 12px; overflow: hidden; border: 1px solid var(--line); border-radius: 3px; background: var(--surface); }
+.pipe-bar i { display: block; height: 100%; transition: width .6s ease; }
+.part-udp { background: var(--udp); }
+.part-single { background: var(--http); }
+.part-botnet { background: var(--bot); }
+.part-users { background: var(--legit); }
+.pipe-capacity { position: absolute; top: 0; bottom: 0; border-left: 2px dashed var(--text); opacity: .5; }
+.pipe-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 2px 0 0; padding: 0; color: var(--muted); font-size: 12px; list-style: none; }
+.pipe-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.pipe-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+.legend-capacity { display: inline-block; height: 10px; border-left: 2px dashed var(--text); opacity: .5; }
+
+.gauges { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+.gauge { padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--radius); }
+.gauge-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.gauge-head small { color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.gauge-head strong { font: 600 20px var(--mono); }
+.gauge.state-good .gauge-head strong { color: var(--ok); }
+.gauge.state-warn .gauge-head strong { color: var(--warn); }
+.gauge.state-bad .gauge-head strong { color: var(--bad); }
+.gauge-bar { position: relative; display: block; height: 10px; margin: 6px 0 4px; overflow: hidden; border: 1px solid var(--line); border-radius: 3px; background: var(--surface-2); }
+.gauge-bar i { display: block; height: 100%; background: var(--line-strong); transition: width .6s ease; }
+.gauge.state-good .gauge-bar i { background: var(--ok); }
+.gauge.state-warn .gauge-bar i { background: var(--warn); }
+.gauge.state-bad .gauge-bar i { background: var(--bad); }
+.gauge-bar.over i { background: repeating-linear-gradient(-45deg, var(--bad) 0 8px, color-mix(in srgb, var(--bad) 70%, var(--surface)) 8px 16px); }
+.gauge-marker { position: absolute; top: 0; bottom: 0; border-left: 2px dashed var(--text); opacity: .5; }
+.gauge-rule { color: var(--faint); font-size: 12px; }
+
+@media (max-width: 640px) {
+  .wave-chip { justify-content: center; padding: 8px; }
+  .wave-chip > span:last-child { display: none; }
+  .wave-banner { padding: 12px 14px; }
+  .gauges { grid-template-columns: 1fr; }
+}

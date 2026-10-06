@@ -2,10 +2,7 @@
 .stage-frame { position: relative; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); overflow: hidden; }
 .stage-svg { display: block; width: 100%; height: auto; }
 .stage-caption { color: var(--muted); font-size: 13px; display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 0 16px 12px; }
-.stage-caption i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
-.udp-dot { background: var(--udp); }
-.http-dot { background: var(--http); }
-.legit-dot { background: var(--legit); }
+.stage-caption .dot { margin-right: 6px; }
 
 /* Edges */
 .edge-line { fill: none; stroke: var(--line-strong); stroke-width: 1.5; transition: stroke .2s; }

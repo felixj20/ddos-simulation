@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: 'DDoS Defense Simulator',
-  description: 'Play the attacker: send traffic through a firewall, a load balancer and a rate limiter, and discover why DDoS protection needs several layers.',
+  description: 'Play the attacker, then the defender: send traffic through firewalls, caches, rate limiters and load balancers, and discover why DDoS protection needs several layers.',
   metadataBase: new URL('http://localhost:3000'),
   icons: { icon: '/favicon.svg' },
   openGraph: {
